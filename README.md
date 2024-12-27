@@ -37,8 +37,8 @@ Edit the configuration files to suit your needs. Each script has its own configu
 Execute the scripts from the terminal. Make sure to provide necessary permissions.
 
 ```bash
-chmod +x script-name.sh
-./script-name.sh
+chmod +x login_vit_wifi.sh
+./login_vit_wifi.sh
 ```
 
 
