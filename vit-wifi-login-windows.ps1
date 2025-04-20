@@ -1,77 +1,78 @@
-# ----- CONFIGURATION -----
-$wifiSSID = "WIFI_NAME"        # <----- INSERT YOUR WIFI SSID HERE (e.g. G-VIT, E-VIT, J-VIT)
-$USERNAME = "YOUR_USERNAME"    # <----- INSERT YOUR USERNAME HERE
-$PASSWORD = "YOUR_PASSWORD"     # <----- INSERT YOUR PASSWORD HERE
+[Console]::CursorVisible = $false
+
+# Config
+# WiFi network name to connect to (G-VIT,E-VIT,L-VIT)
+$wifiSSID = "WIFI_SSID"
+# Username for captive portal authentication
+$USERNAME = "YOUR_USERNAME"  
+# Password for captive portal authentication
+$PASSWORD = "YOUR_PASSWORD"
 $LOGIN_URL = "http://phc.prontonetworks.com/cgi-bin/authlogin?URI=http://detectportal.firefox.com/canonical.html"
 
-# ----- FUNCTION: GET CONNECTED SSID -----
+# Spinner Function
+function Show-Spinner {
+    param([int]$Duration = 3)
+    $spinner = "|/-\"
+    for ($i = 0; $i -lt ($Duration * 10); $i++) {
+        Write-Host -NoNewline ("`r[{0}]" -f $spinner[$i % $spinner.Length])
+        Start-Sleep -Milliseconds 100
+    }
+    Write-Host "`r    " -NoNewline
+}
+
+# Get connected SSID
 function Get-ConnectedSSID {
-    $interfaceInfo = netsh wlan show interfaces
-    $ssidLine = $interfaceInfo | Select-String '^\s*SSID\s*:\s*(.+)$'
-    if ($ssidLine) {
-        $ssid = ($ssidLine -replace '^\s*SSID\s*:\s*', '').Trim()
-        if ($ssid -and $ssid -ne 'SSID') {
-            return $ssid
-        }
+    $output = netsh wlan show interfaces
+    $match = ($output | Select-String '^\s*SSID\s*:\s*(.+)$')
+    if ($match) {
+        return ($match.Matches.Groups[1].Value.Trim())
     }
     return $null
 }
 
-# ----- FUNCTION: CONNECT TO WIFI -----
+# Connect to WiFi
 function Connect-ToWiFi {
-    Write-Host "Attempting to connect to Wi-Fi: $wifiSSID..."
-    $maxAttempts = 3
-    for ($i = 1; $i -le $maxAttempts; $i++) {
-        netsh wlan connect name="$wifiSSID" | Out-Null
-
-        $currentSSID = Get-ConnectedSSID
-        if ($currentSSID -and ($currentSSID.Trim().ToLower() -eq $wifiSSID.ToLower())) {
-            Write-Host "Connected to Wi-Fi: $wifiSSID"
-            return $true
-        } else {
-            Write-Host "Attempt $i/$maxAttempts failed to connect."
-        }
+    Write-Host "Connecting to Wi-Fi: $wifiSSID ..."
+    netsh wlan connect name="$wifiSSID" | Out-Null
+    Start-Sleep -Seconds 4
+    $ssid = Get-ConnectedSSID
+    if ($ssid -ieq $wifiSSID) {
+        return $true
     }
-
-    Write-Error "Failed to connect to '$wifiSSID' after multiple attempts."
     return $false
 }
 
-# ----- FUNCTION: SPINNER (NO DELAY) -----
-function Show-Spinner {
-    param([int]$Duration = 5)
-    $spinner = "|/-\\"
-    for ($i = 0; $i -lt ($Duration * 10); $i++) {
-        Write-Host -NoNewline "`r[$($spinner[$i % $spinner.Length])] "
+# Detect Captive Portal (Windows-independent)
+function NeedsLogin {
+    try {
+        $response = Invoke-WebRequest -Uri "http://detectportal.firefox.com/success.txt" -UseBasicParsing -TimeoutSec 5
+        return ($response.StatusCode -ne 200 -or $response.Content.Trim() -ne "success")
+    } catch {
+        return $true
     }
-    Write-Host "`r   " -NoNewline
 }
 
-# ----- MAIN EXECUTION -----
-$currentSSID = Get-ConnectedSSID
+# Main
+if (-not (Connect-ToWiFi)) {
+    Write-Host "Could not verify Wi-Fi connection. Proceeding anyway..."
+}
 
-if ($currentSSID -and ($currentSSID.Trim().ToLower() -eq $wifiSSID.ToLower())) {
-    Write-Host "Already connected to '$wifiSSID'."
+if (NeedsLogin) {
+    Write-Host "Attempting to log in to the captive portal..."
+    try {
+        Invoke-WebRequest -Uri $LOGIN_URL -Method POST -Body @{
+            "userId"      = $USERNAME
+            "password"    = $PASSWORD
+            "serviceName" = "ProntoAuthentication"
+        } -UseBasicParsing -TimeoutSec 10 | Out-Null
+
+        Show-Spinner -Duration 2
+        Write-Host "`nConnected successfully without browser pop-up!"
+    } catch {
+        Write-Host "Login failed. Please check your credentials or network."
+    }
 } else {
-    $connected = Connect-ToWiFi
-    if (-not $connected) {
-        exit 1
-    }
+    Write-Host "Already connected. No captive portal detected."
 }
 
-# ----- LOGIN REQUEST -----
-Write-Host "Attempting to log in to the captive portal..."
-
-try {
-    $null = Invoke-WebRequest -Uri $LOGIN_URL -Method Post -Body @{
-        "userId"      = $USERNAME
-        "password"    = $PASSWORD
-        "serviceName" = "ProntoAuthentication"
-    } -UseBasicParsing -TimeoutSec 10
-
-    Show-Spinner -Duration 3
-    Write-Host "`nConnected to the network successfully!"
-} catch {
-    Write-Host "Failed to connect to the network. Please check your credentials or network status."
-    Write-Error $_
-}
+[Console]::CursorVisible = $true
